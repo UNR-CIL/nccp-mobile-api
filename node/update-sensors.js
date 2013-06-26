@@ -14,8 +14,8 @@ var mysql = require( 'mysql' ),
 var config = require( 'config' );
 
 // Constants and bookkeeping
-var DATA_THRESHOLD = 3, // Months - any data past this age will be deleted
-	UPDATE_INTERVAL, = 8, // Hours, how often it should check for updates
+var DELETE_THRESHOLD = 3, // Months - any data past this age will be deleted
+	UPDATE_INTERVAL, = 10, // Seconds, how often we should check for something to do
 	MAX_CONNECTIONS = 5,
 	TIMEOUT = 5,
 	sensorPool = [], // Currently working on
@@ -29,11 +29,11 @@ var pool = mysql.createPool({
 	database: config.db.name
 });
 
-// Initial startup /////////////////////////////////////////
+// Startup ////////////////////////////////
 
 Startup();
 
-// Start polling every 15 seconds //////////////////////////
+// Start polling //////////////////////////
 
 var interval = setInterval( function () {
 
@@ -52,7 +52,7 @@ var interval = setInterval( function () {
 	console.log( "Connection count: ", connCount );
 	console.log( "Time: ", timer );
 
-}, UPDATE_INTERVAL * 1000 * 60 );
+}, UPDATE_INTERVAL * 1000 );
 
 // END //////////////////////////////////////////////////////
 
