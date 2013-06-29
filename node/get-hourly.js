@@ -15,7 +15,7 @@ var config = require( 'config' );
 
 // Constants and bookkeeping
 var MAX_SENSORS = 5,
-	INTERVAL = 15,
+	INTERVAL = 4,
 	TIMEOUT = 300, // 5 min
 	RESET_TIMEOUT = 28800, // 8 hours
 	sensorPool = [], // Currently working on

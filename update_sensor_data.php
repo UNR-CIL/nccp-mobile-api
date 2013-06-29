@@ -20,7 +20,7 @@ $ch = curl_init();
 curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
 
 // Extend these a bit just in case 
-curl_setopt( $ch, CURLOPT_TIMEOUT, 300 );  
+curl_setopt( $ch, CURLOPT_TIMEOUT, 300 );
 set_time_limit( 300 );
 
 // Update the sensor_updated field
@@ -58,9 +58,9 @@ function set_parameter ( $ch, $parameter, $value ) {
 	curl_setopt( $ch, CURLOPT_URL, SET_PARAMETER_URL );
 
 	$fields = array(
-	            'parameter' => urlencode( $parameter ),
-	            'value' => urlencode( $value )
-	        );
+        'parameter' => urlencode( $parameter ),
+        'value' => urlencode( $value )
+    );
 
 	// Format POST variables
 	$fields_string = '';

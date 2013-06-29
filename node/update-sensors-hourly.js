@@ -14,13 +14,13 @@ var mysql = require( 'mysql' ),
 var config = require( 'config' );
 
 // Constants and bookkeeping
-var UPDATE_INTERVAL = 4, 	// Hours, how often a sensor should be updated
-	IDLE_INTERVAL 	= 10, 	// Seconds, idle period to wait if the max # of sensors are currently being updated
-	MAX_SENSORS 	= 5, 	// Maximum number of sensors to update at a time
-	TIMEOUT 		= 300, 	// Seconds, max amount of time to attempt to update a sensor before moving on
-	timer 			= 0,
-	sensorPool 		= [], 	// Sensors currently updating
-	connCount 		= 0;
+var UPDATE_INTERVAL = 4, // Seconds, how often we should check for something to do
+	MAX_CONNECTIONS = 5,
+	TIMEOUT = 120, // Seconds, max amount of time to attempt to update a sensor before moving on
+	timer = 0,
+	currentSensor = null, // Currently working on
+	updatePending = false,
+	connCount = 0;
 
 // Set up the connection pool - this is not the same as the sensor pool
 var pool = mysql.createPool({
@@ -30,17 +30,13 @@ var pool = mysql.createPool({
 	database: config.db.name
 });
 
-// Do some clean up before starting over ////////////////////////////
+// Startup ////////////////////////////////
 
-Reset();
+Startup();
 
-// Start checking for sensors to update /////////////////////////////
+// Start polling //////////////////////////
 
-UpdateSensors();
-
-//SendUpdateRequest( 2 );
-
-/*var interval = setInterval( function () {
+var interval = setInterval( function () {
 
 	// Check the current sensor pool and remove old sensors/add new ones as needed
 	UpdateSensors();
@@ -54,18 +50,14 @@ UpdateSensors();
 		console.log( "Time: ", timer );	
 	}	
 
-}, UPDATE_INTERVAL * 1000 );*/
+}, UPDATE_INTERVAL * 1000 );
 
 // END //////////////////////////////////////////////////////
-
-/////////////////////////////////////////////////////////////
-// Functions ////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////
 
 // Events
 
 process.on( 'SIGINT', function() {
-    console.log("\nShutting down by interrupt...");
+    console.log("\nShutting down...");
 
     pool.end();
     process.exit( 0 );
@@ -74,7 +66,7 @@ process.on( 'SIGINT', function() {
 // Functions
 
 // Remove all current connections to the database and remove old pending statuses
-function Reset () {
+function Startup () {
 
 	// Clear any old pending states
 	pool.getConnection( function ( err, connection ) {
@@ -92,33 +84,11 @@ function Reset () {
 		});
 	});
 
-	timer = 0;
-	sensorPool = []
-}
-
-function UpdateSensors () {
-	// Grab more sensors to update if connections are available, otherwise
-	// hang out
-	if ( sensorPool.length < MAX_SENSORS ) {
-		var sensor = GetSensor( function ( sensorId ) {
-			if ( sensorId ) {
-				sensorPool.push( sensorId );
-				SendUpdateRequest( sensorId );
-
-				if ( config.debug ) console.log( 'Updating sensor ' + sensorId );
-			} else {
-				// If there aren't any sensors left to update, go to idle state for the wait period
-				Idle( UPDATE_INTERVAL * 60 * 60 );
-			}
-		});
-	} else {
-		// If we're updating the max number of sensors, do nothing
-		Idle( IDLE_INTERVAL );
-	}
+	Reset();
 }
 
 // Check current sensors in pool and update appropriately
-/*function UpdateSensors () {
+function UpdateSensors () {
 
 	// Don't do anything if we're already updating
 	if ( ! updatePending ) {
@@ -143,46 +113,50 @@ function UpdateSensors () {
 		}
 	}
 	
-}*/
+}
 
 // Retrieve a sensor that hasn't been updated yet
 function GetSensor ( UpdateCallback ) {
 
-	pool.getConnection( function ( err, connection ) {
-		if ( err ) console.log( err );
+	if ( connCount < MAX_CONNECTIONS ) {
+		pool.getConnection( function ( err, connection ) {
+			if ( err ) console.log( err );
 
-		connCount++;
-		if ( config.debug ) console.log( 'GetSensor connection added.' );			
+			connCount++;
+			if ( config.debug ) console.log( 'GetSensor connection added.' );			
 
-		// First get a sensor that needs to be updated (is out of date by > 2 day)
-		// along with the last timestamp for that sensor
-		// If timestamp is empty this means there's no data for that sensor
-		connection.query( "SELECT list.logical_sensor_id FROM ci_logical_sensor AS list \
-			WHERE pending = 0 \
-			AND ( ( ( sensor_updated + INTERVAL 4 HOUR ) < ( CONVERT_TZ(UTC_TIMESTAMP(), 'UTC', 'US/Pacific' ) ) ) \
-			OR sensor_updated IS NULL ) \
-			LIMIT 1",
-			function ( err, rows ) {					
-				if ( err ) console.log( err );
+			// First get a sensor that needs to be updated (is out of date by > 2 day)
+			// along with the last timestamp for that sensor
+			// If timestamp is empty this means there's no data for that sensor
+			connection.query( "SELECT list.logical_sensor_id FROM ci_logical_sensor_hourly AS list " +
+				"WHERE pending = 0 " + 
+				"AND ( ( ( sensor_updated + INTERVAL 2 DAY ) < NOW() ) OR sensor_updated IS NULL ) " +
+				"AND list.logical_sensor_id NOT IN " +
+				"( SELECT DISTINCT logical_sensor_id " +
+				"FROM ci_logical_sensor_data_hourly " +
+				"WHERE `timestamp` > ( NOW() - INTERVAL 2 DAY ) " +
+				"ORDER BY logical_sensor_id ) LIMIT 1",
+				function ( err, rows ) {					
+					if ( err ) console.log( err );
 
-				if ( rows ) {
-					UpdateCallback( rows[0].logical_sensor_id );
-				}
+					if ( rows ) {
+						UpdateCallback( rows[0].logical_sensor_id );
+					}
 
-				connection.end();
+					connection.end();
 
-				connCount--;
-				if ( config.debug ) console.log( 'GetSensor connection removed.' );					
+					connCount--;
+					if ( config.debug ) console.log( 'GetSensor connection removed.' );					
+			});
 		});
-	});
+	}
 
 }
 
 function SendUpdateRequest ( sensorId ) {
-	// Set pending status on the sensor
-	SetPending( sensorId, 1 );
+	updatePending = true;
 
-	request.post( config.paths.base + 'nccp/index.php/data/update_sensor_data_combined',
+	request.post( config.paths.base + 'nccp/index.php/data/update_sensor_data_hourly',
 	    { form: { sensor_id: sensorId, period: 'update' } },
 	    function ( error, response, body ) {
 	    	if ( error ) console.log( error );
@@ -190,18 +164,14 @@ function SendUpdateRequest ( sensorId ) {
 	        if ( ! error && response.statusCode == 200 ) {
 	        	var parsed = JSON.parse( body );
 
-	        	// If success was given, remove sensor from the pool
-	        	if ( parsed.success ) sensorPool.splice( sensorPool.indexOf( sensorId ), 1 );
-
 	            if ( config.debug ) {
 	            	if ( parsed.success ) console.log( 'Sensor ' + sensorId + ' successfully updated' );
 
 	            	console.log( parsed );
-	            }
+	            }	            	
 	        }
 
-	        // Clear pending status on that sensor
-	        SetPending( sensorId, 0 );
+	        updatePending = false;
 	    }
 	);
 
@@ -217,7 +187,7 @@ function SetPending ( sensorId, one_or_zero ) {
 		connCount++;
 		if ( config.debug ) console.log( 'SetPending connection added.' );		
 
-		connection.query( "UPDATE ci_logical_sensor SET pending = ? WHERE logical_sensor_id = ?", [ one_or_zero, sensorId ], function ( err, rows ) {
+		connection.query( "UPDATE ci_logical_sensor_hourly SET pending = ? WHERE logical_sensor_id = ?", [ one_or_zero, sensorId ], function ( err, rows ) {
 			if ( err ) console.log( err );
 			connection.end();
 			console.log( 'SetPending connection removed.' );
@@ -226,11 +196,9 @@ function SetPending ( sensorId, one_or_zero ) {
 	});
 }
 
-// Period is specified in seconds
-function Idle ( period ) {
-	if ( config.debug ) console.log( 'Idling for ' + period + ' seconds.' );
-
-	setTimeout( function () {
-		if ( config.debug ) console.log( 'Current sensors: ' + sensorPool );
-	}, period * 1000 );
+// Reset the script (timer, currentSensor and pending state)
+function Reset () {
+	timer = 0;
+	currentSensor = null;
+	updatePending = false;
 }
