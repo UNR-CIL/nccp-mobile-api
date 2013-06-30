@@ -13,15 +13,12 @@ class Api_data extends CI_Model {
 	private $specification = null;
 
 	public function __construct () {
-
 		parent::__construct();
 		$this->load->database();
 
-		//$path = $this->config->item('wsdl_path') . '/DataRetrieval.svc'; // Local
 		$path = 'http://sensor.nevada.edu/Services/DataRetrieval/DataRetrieval.svc?wsdl'; // Live
 
 		$this->data_client = new SoapClient( $path );
-	
 	}
 
 	///////////////////////////////////////////////////////////////
@@ -29,7 +26,6 @@ class Api_data extends CI_Model {
 	///////////////////////////////////////////////////////////////
 
 	public function search ( $sensor_ids = null, $start = null, $end = null, $skip = 0, $take = 1000 ) {
-
 		// Build new specification is sensor_ids was passed
 		if ( $sensor_ids ) {
 			$this->specification = $this->build_sensor_specification( $sensor_ids, $start, $end );
@@ -41,11 +37,9 @@ class Api_data extends CI_Model {
 		$results = $this->data_client->Search( array( "search" => $this->specification, "skip" => $skip, "take" => $take ) );
 
 		return $results->SearchResult->Result;
-
 	}
 
 	public function NumberOfResults ( $sensor_ids, $start, $end ) {
-
 		// Build new specification is sensor_ids was passed
 		if ( $sensor_ids  ) {
 			$this->specification = $this->build_sensor_specification( $sensor_ids, $start, $end );
@@ -56,8 +50,7 @@ class Api_data extends CI_Model {
 		// Send the query to the data API
 		$results = $this->data_client->NumberOfResults( array( "search" => $this->specification ) );		
 
-		return ! empty( $results ) ? $results->NumberOfResultsResult : false; 
-		
+		return ! empty( $results ) ? $results->NumberOfResultsResult : false; 		
 	}
 
 	///////////////////////////////////////////////////////////////
@@ -67,7 +60,6 @@ class Api_data extends CI_Model {
 	// Build sensor specification for passing to data search method
 	// Sensor IDs is an array of sensor IDs (can be a single value)
 	public function build_sensor_specification ( $sensor_ids, $start, $end ) {
-
 		if ( ! is_array( $sensor_ids ) ) { 
 			$sensor_ids = array( $sensor_ids );
 		}			
@@ -107,12 +99,10 @@ class Api_data extends CI_Model {
 	    $specification->Ending = $this->format_date( $end );
 
 	    return $specification;
-
 	}
 
 	// Retrieve the Unit information associated with the logical sensor
 	private function get_units ( $sensor_ids ) {
-
 		// Get the unit IDs from relationships
 		if ( ! empty( $sensor_ids ) ) {
 			$sql = sprintf(
@@ -138,12 +128,10 @@ class Api_data extends CI_Model {
 		}
 
 		return $this->return_results( $this->db->query( $sql ));
-
 	}
 
 	// Retrieve logical sensor info based on array of ids
 	private function get_sensors ( $sensor_ids ) {
-
 		if ( ! empty( $sensor_ids ) ) {
 			$sql = sprintf(
 				"SELECT * FROM ci_logical_sensor WHERE "
@@ -167,32 +155,25 @@ class Api_data extends CI_Model {
 		}			
 
 		return $this->return_results( $this->db->query( $sql ));
-
 	}
 
 	// Get timezone.  
 	private function get_timezone ( $id_string ) {
-
 		return $this->return_results( $this->db->query( sprintf(
 			"SELECT * FROM ci_timezones WHERE `timezone_id` = '%s'",
 			$id_string
 		)));
-
 	}
 
 	// Checks query object for results and returns results if so or false if not
 	private function return_results ( $query_object ) {
-
 		return $query_object->num_rows() > 0 ? $query_object->result() : false;
-
 	}
 
 	// Formats DateTime object into useable string, either
 	// in standard mysql or asp formats
 	private function format_date ( $date, $type = 'asp' ) {
-
 		return $type == 'asp' ? $date->format( "Y-m-d\TH:i:s" ) : $date->format( "Y-m-d H:i:s" );
-
 	}
 
 }

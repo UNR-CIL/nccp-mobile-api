@@ -10,6 +10,7 @@
 //define( 'BASE', 'http://nccp.local/nccp/index.php/' ); // Local
 define( 'BASE', 'http://nccp.monterey-j.com/nccp/index.php/' ); // Live
 
+// Medthod URLs
 define( 'GET_SENSORS_URL', BASE . "measurements/get_sensors" );
 define( 'UPDATE_SENSOR_DATA_URL', BASE . "data/update_sensor_data" );
 define( 'SET_PARAMETER_URL', BASE . "data/set_parameter" );
