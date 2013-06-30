@@ -188,7 +188,8 @@ function SendUpdateRequest ( sensorId ) {
 	    	if ( error ) console.log( error );
 
 	        if ( ! error && response.statusCode == 200 ) {
-	        	var parsed = JSON.parse( body );
+	        	console.log( body );
+	        	/*var parsed = JSON.parse( body );
 
 	        	// If success was given, remove sensor from the pool
 	        	if ( parsed.success ) sensorPool.splice( sensorPool.indexOf( sensorId ), 1 );
@@ -197,7 +198,7 @@ function SendUpdateRequest ( sensorId ) {
 	            	if ( parsed.success ) console.log( 'Sensor ' + sensorId + ' successfully updated' );
 
 	            	console.log( parsed );
-	            }
+	            }*/
 	        }
 
 	        // Clear pending status on that sensor

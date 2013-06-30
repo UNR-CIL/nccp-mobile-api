@@ -97,7 +97,7 @@ class Data extends CI_Controller {
 	// Params:
 	// sensor_id - single sensor ID
 	// period - how far back to update, specified in interval format (P6M, P2W, etc.)
-	public function update_sensor_data_combined ( $sensor = null, $period = null ) {
+	public function update_sensor_data_combined ( $sensor = null ) {
 
 		// How many records should be processed at once
 		// 1000 is simply the max the NCCP API will return, so no point going
@@ -106,122 +106,99 @@ class Data extends CI_Controller {
 
 		// Make sure we should be here
 		if ( ! ( $this->input->post('sensor_id') || $sensor ) ) die( 'Sensor id is required.' );
-		if ( ! ( $this->input->post('period') || $period ) ) die( 'Period must be specified' );
 
 		$sensor_id = $sensor ? $sensor : $this->input->post('sensor_id');
-		$period = $period ? $period : $this->input->post( 'period' );
 
-		// This is a special period that just means all data from the last available
-		// data point
-		if ( $period == 'update' ) {
-			$query = $this->db->query( sprintf(
-				"SELECT * FROM ci_logical_sensor_data
-				WHERE logical_sensor_id = %d ORDER BY `timestamp` DESC
-				LIMIT 1",
-				$sensor_id
-			));
+		// Get the last data point timestamp
+		$query = $this->db->query( sprintf(
+			"SELECT * FROM ci_logical_sensor_data
+			WHERE logical_sensor_id = %d ORDER BY `timestamp` DESC
+			LIMIT 1",
+			$sensor_id
+		));
 
-			if ( $query->num_rows() > 0 ) {
-				$last = new DateTime( $query->row()->timestamp );
-				$now = new DateTime();
-				$difference = $now->diff( $last->sub( new DateInterval( 'P0D' ) ) ); // A day's overlap, ensures no gaps
-				$period = $difference->format( 'P%yY%mM%dD' );
-			}
+		// Set up timekeeping
+		if ( $query->num_rows() > 0 ) {
+			$start = new DateTime( $query->row()->timestamp );
+			$end = new DateTime();
+
+			// Adjust for timezone difference
+			$start->add( new DateInterval( 'PT8H' ) );			
+			$end->add( new DateInterval( 'PT8H' ) );
+		} else {
+			die( 'Could not retrieve last timestamp.' );
 		}
-
-		// Set up timekeeping - note that the END is always now, the START is at the end minus <specified period>
-		$end = new DateTime();
-		$end->add( new DateInterval( 'PT8H' ) ); // Adjust for timezone difference
-		$start = clone $end;
-		$start->sub( new DateInterval( $period ) );		
-		$start->sub( new DateInterval( 'PT8H' ) ); // Adjust for timezone difference
 
 		// If start/end is cool, get the number of results from the API
 		// and perform the data update
 		if ( isset( $start ) && isset( $end ) ) {
-
 			// Figure out how much data there is
 			$num_results = $this->Api_data->NumberOfResults( array( $sensor_id ), $start, $end );
 
 			$skip = 0;
 			$total = 0;
 			$hourly_total = 0;
-
-			// Start time of processing
-			$start_time = new DateTime();
+			$data = array();
 
 			// Grab information on the sensor
 			$sensor_info = $this->db->query( sprintf(
 				"SELECT * FROM ci_logical_sensor WHERE `logical_sensor_id` = %d",
 				$sensor_id
 			));
-			$sensor_info = $sensor_info->row();
+			$sensor_info = $sensor_info->row();			
 
+			// Start time of processing
+			$start_time = new DateTime();
+
+			// Collect all the data from the query
 			while ( $skip < $num_results ) {
 				// Set the time limit before proceeding
 				set_time_limit( 300 );
 
 				// Now that we have that, fetch the data values
-				$data = $this->Api_data->search( array( $sensor_id ), $start, $end, $skip, $num_to_process );
+				$result = $this->Api_data->search( array( $sensor_id ), $start, $end, $skip, $num_to_process );
 
-				// If the data exists, enter it into the database
-				if ( ! empty( $data ) ) {
-					$hourly_data = array();
-
-					// Calculate divider based on sensor interval
-					// (Only applies to sensors with interval < 1 hour)
-					switch ( $sensor_info->interval ) {
-						case 'PT1M': $divider = 60; break;
-						case 'PT10M': $divider = 6; break;
-						case 'PT30M': $divider = 2; break;
-					}
-
-					// Align on the top of the hour if necessary
-					if ( $sensor_info->interval != 'PT1H' ) {
-						$align = new DateTime( $data[0]->TimeStamp );
-						$offset = $divider - ( (int)$align->format( 'i' ) / ( 60 / $divider ) );	
-					} else {
-						$offset = 0;
-						$divider = 1;
-					}					
-
-					for ( $i = $offset; $i < count( $data ); $i += $divider ) {
-						$hourly_data[] = $data[$i];
-					}
-
-					$this->process_data_set_combined( $data, 'ci_logical_sensor_data' );
-					$this->process_data_set_combined( $hourly_data, 'ci_logical_sensor_data_hourly' );
-
-					$total += count( $data );
-					$hourly_total += count( $hourly_data );					
-				} else {
-					echo json_encode( array( "warning" => "No data received on sensor " . $sensor_id ) );
-				}
+				// First collect all the data
+				if ( ! empty( $result ) ) $data = array_merge( $data, $result );
 
 				// Fast forward
 				$skip += $num_to_process;
-			}					
+			}
+
+			// Process the data set now that we have all of it
+			if ( ! empty( $data ) ) {
+				$hourly_data = $this->get_hourly_data( $data, $sensor_info );
+
+				$this->process_data_set_combined( $data, 'ci_logical_sensor_data' );
+				$this->process_data_set_combined( $hourly_data, 'ci_logical_sensor_data_hourly' );
+
+				$total += count( $data );
+				$hourly_total += count( $hourly_data );					
+			} else {
+				echo json_encode( array( "warning" => "No data received on sensor " . $sensor_id ) );
+			}								
 
 			// If that succeeded, enter new timestamps into logical_sensor table, calculate processing time and output success
-
 			// Calculate processing time
 			$end_time = new DateTime();
-
 			$difference = $start_time->diff( $end_time );
 
 			// Update the updated time
 			$this->db->query( sprintf(
-				"UPDATE ci_logical_sensor SET `sensor_updated` = '%s', `pending` = 0 WHERE `logical_sensor_id` = %d",
+				"UPDATE ci_logical_sensor SET `sensor_updated` = '%s' WHERE `logical_sensor_id` = %d",
 				$end_time->format( 'Y-m-d H:i:s' ),
 				$sensor_id
 			));
 
+			// And echo the result
 			echo json_encode( array(
 				'sensor' 			=> $sensor_id,
 				'success' 			=> $hourly_total . " hourly entries/" . $total . " normal entries entered successfully.",
 				'time_elapsed' 		=> $difference->format( '%h:%i:%s' ),
 				'sensor_updated' 	=> $end_time->format( 'Y-m-d H:i:s' )
 			));		
+		} else {
+			die( json_encode( array( 'error' => 'Sensor ' . $sensor_id . ' could not be updated.' ) ) );
 		}
 	}
 
@@ -611,6 +588,31 @@ class Data extends CI_Controller {
 
 		$this->db->query( $sql );
 
+	}
+
+	private function get_hourly_data ( &$data, $sensor_info ) {
+		$hourly_data = array();
+
+		// Calculate divider based on sensor interval
+		// (Only applies to sensors with interval < 1 hour)
+		switch ( $sensor_info->interval ) {
+			case 'PT1M': $divider = 60; break;
+			case 'PT10M': $divider = 6; break;
+			case 'PT30M': $divider = 2; break;
+		}
+
+		// Align on the top of the hour if necessary
+		if ( $sensor_info->interval != 'PT1H' ) {
+			$align = new DateTime( $data[0]->TimeStamp );
+			$offset = $divider - ( (int)$align->format( 'i' ) / ( 60 / $divider ) );	
+		} else {
+			$offset = 0;
+			$divider = 1;
+		}					
+
+		for ( $i = $offset; $i < count( $data ); $i += $divider ) $hourly_data[] = $data[$i];
+
+		return $hourly_data;
 	}
 
 	// Return database parameters, like when the last time sensor list was updated
