@@ -75,7 +75,6 @@ process.on( 'SIGINT', function() {
 
 // Remove all current connections to the database and remove old pending statuses
 function Reset () {
-
 	// Clear any old pending states
 	pool.getConnection( function ( err, connection ) {
 		if ( err ) console.log( err );
@@ -102,18 +101,32 @@ function UpdateSensors () {
 	if ( sensorPool.length < MAX_SENSORS ) {
 		var sensor = GetSensor( function ( sensorId ) {
 			if ( sensorId ) {
-				sensorPool.push( sensorId );
-				SendUpdateRequest( sensorId );
+				// Update the sensor only if it's not already in the queue
+				if ( sensorPool.indexOf( sensorId ) == -1 ) {
+					sensorPool.push( sensorId );
+					SendUpdateRequest( sensorId );
 
-				if ( config.debug ) console.log( 'Updating sensor ' + sensorId );
+					if ( config.debug ) console.log( 'Updating sensor ' + sensorId );
+				}
+
+				// Get another if we're not full yet
+				UpdateSensors();
 			} else {
-				// If there aren't any sensors left to update, go to idle state for the wait period
-				Idle( UPDATE_INTERVAL * 60 * 60 );
-			}
+				// If we didn't get a sensor, this mean we're done updating for now, so wait
+				// for the wait interval and start again
+				Idle( UPDATE_INTERVAL * 60 * 60, function () {
+					UpdateSensors();
+				});
+			}				
 		});
-	} else {
-		// If we're updating the max number of sensors, do nothing
-		Idle( IDLE_INTERVAL );
+	}
+
+	// If the queue is full, do nothing.  UpdateSensors will be called again
+	// from SendUpdateRequest upon completion of updating the next sensor so
+	// another can immediately be updated.
+	if ( config.debug ) {
+		console.log( 'Current sensor queue: ', sensorPool );
+		console.log( 'Connection count: ', connCount );
 	}
 }
 
@@ -147,7 +160,6 @@ function UpdateSensors () {
 
 // Retrieve a sensor that hasn't been updated yet
 function GetSensor ( UpdateCallback ) {
-
 	pool.getConnection( function ( err, connection ) {
 		if ( err ) console.log( err );
 
@@ -175,7 +187,6 @@ function GetSensor ( UpdateCallback ) {
 				if ( config.debug ) console.log( 'GetSensor connection removed.' );					
 		});
 	});
-
 }
 
 function SendUpdateRequest ( sensorId ) {
@@ -188,29 +199,27 @@ function SendUpdateRequest ( sensorId ) {
 	    	if ( error ) console.log( error );
 
 	        if ( ! error && response.statusCode == 200 ) {
-	        	console.log( body );
-	        	/*var parsed = JSON.parse( body );
+	        	//console.log( body );
+	        	var parsed = JSON.parse( body );
 
-	        	// If success was given, remove sensor from the pool
+				if ( config.debug ) console.log( parsed );
+
+	        	// If success was given, remove sensor from the pool...
 	        	if ( parsed.success ) sensorPool.splice( sensorPool.indexOf( sensorId ), 1 );
 
-	            if ( config.debug ) {
-	            	if ( parsed.success ) console.log( 'Sensor ' + sensorId + ' successfully updated' );
-
-	            	console.log( parsed );
-	            }*/
+	        	// ... and get another
+	        	UpdateSensors();	            
 	        }
 
 	        // Clear pending status on that sensor
 	        SetPending( sensorId, 0 );
 	    }
 	);
-
 }
 
 // Set pending status on a single sensor to 1 or 0
 function SetPending ( sensorId, one_or_zero ) {
-	if ( config.debug ) console.log( 'Setting sensor ' + sensorId + ' to pending' );
+	if ( config.debug ) console.log( 'Setting sensor ' + sensorId + ' pending status to ' + one_or_zero );
 
 	pool.getConnection( function ( err, connection ) {
 		if ( err ) console.log( err );
@@ -228,10 +237,12 @@ function SetPending ( sensorId, one_or_zero ) {
 }
 
 // Period is specified in seconds
-function Idle ( period ) {
+function Idle ( period, finished ) {
 	if ( config.debug ) console.log( 'Idling for ' + period + ' seconds.' );
 
 	setTimeout( function () {
 		if ( config.debug ) console.log( 'Current sensors: ' + sensorPool );
+
+		finished();
 	}, period * 1000 );
 }
