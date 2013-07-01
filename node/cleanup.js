@@ -11,10 +11,10 @@ var mysql = require( 'mysql' ),
 var config = require( 'config' );
 
 // Constants and bookkeeping
-var DELETE_THRESHOLD = 3, // Months - any data past this age will be deleted
-	UPDATE_INTERVAL = 4, // Hours, how often we should check for something to do
-	MAX_CONNECTIONS = 5,
-	connCount = 0;
+var DELETE_THRESHOLD 	= 3, // Months - any data past this age will be deleted
+	UPDATE_INTERVAL 	= 4, // Hours, how often we should check for something to do
+	MAX_CONNECTIONS 	= 5,
+	connCount 			= 0;
 
 // Set up the connection pool - this is not the same as the sensor pool
 var pool = mysql.createPool({
@@ -48,7 +48,7 @@ process.on( 'SIGINT', function() {
 //////////////////////////////////////////////////////////////
 
 function Cleanup () {
-	// Clean up both tables
+	// Clean up both tables...
 	if ( connCount < MAX_CONNECTIONS ) {
 		// High-res sensor data (per minute table)
 		DeleteFromTable( 'ci_logical_sensor_data' );
@@ -57,7 +57,7 @@ function Cleanup () {
 		DeleteFromTable( 'ci_logical_sensor_data_hourly' );
 	}
 
-	// Then wait a while and do it again
+	// ... then wait a while and do it again
 	Idle( UPDATE_INTERVAL * 60 * 60, function () {
 		Cleanup();
 	});

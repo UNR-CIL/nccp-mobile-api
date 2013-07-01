@@ -35,7 +35,7 @@ Reset();
 
 // Start checking for sensors to update /////////////////////////////
 
-UpdateSensors();
+UpdateSensorData();
 
 // END //////////////////////////////////////////////////////
 
@@ -79,7 +79,7 @@ function Reset () {
 // and update it if not.  Called recursively until the max # of sensors is reached.
 // Also called by SendUpdate Request upon finishing updating a sensor so the max # of
 // sensors is always being updated.
-function UpdateSensors () {
+function UpdateSensorData () {
 	// Grab more sensors to update if connections are available, otherwise
 	// hang out
 	if ( sensorPool.length < MAX_SENSORS ) {
@@ -94,18 +94,18 @@ function UpdateSensors () {
 				}
 
 				// Get another if we're not full yet
-				UpdateSensors();
+				UpdateSensorData();
 			} else {
 				// If we didn't get a sensor, this mean we're done updating for now, so wait
 				// for the wait interval and start again
 				Idle( UPDATE_INTERVAL * 60 * 60, function () {
-					UpdateSensors();
+					UpdateSensorData();
 				});
 			}				
 		});
 	}
 
-	// If the queue is full, do nothing.  UpdateSensors will be called again
+	// If the queue is full, do nothing.  UpdateSensorData will be called again
 	// from SendUpdateRequest upon completion of updating the next sensor so
 	// another can immediately be updated.
 	if ( config.debug ) {
@@ -134,8 +134,10 @@ function GetSensor ( UpdateCallback ) {
 			function ( err, rows ) {					
 				if ( err ) console.log( err );
 
-				if ( rows ) {
+				if ( rows[0] && rows[0].logical_sensor_id ) {
 					UpdateCallback( rows[0].logical_sensor_id );
+				} else {
+					UpdateCallback( null );
 				}
 
 				connection.end();
@@ -147,7 +149,7 @@ function GetSensor ( UpdateCallback ) {
 }
 
 // Send POST request to the CodeIgniter interface to update a sensor.  This only sends the
-// ID of the sensor to update - timekeeping is handled by CI.  Will called UpdateSensors
+// ID of the sensor to update - timekeeping is handled by CI.  Will called UpdateSensorData
 // again on completion to immediately get another sensor.
 function SendUpdateRequest ( sensorId ) {
 	// Set pending status on the sensor
@@ -172,7 +174,7 @@ function SendUpdateRequest ( sensorId ) {
 	        	sensorPool.splice( sensorPool.indexOf( sensorId ), 1 );
 
 	        	// ... and get another
-	        	UpdateSensors();	            
+	        	UpdateSensorData();	            
 	        }
 
 	        // Clear pending status on that sensor
