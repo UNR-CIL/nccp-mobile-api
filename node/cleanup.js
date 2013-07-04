@@ -12,7 +12,7 @@ var config = require( 'config' );
 
 // Constants and bookkeeping
 var DELETE_THRESHOLD 	= 3, // Months - any data past this age will be deleted
-	UPDATE_INTERVAL 	= 4, // Hours, how often we should check for something to do
+	UPDATE_INTERVAL 	= 24, // Hours, how often we should check for something to do
 	MAX_CONNECTIONS 	= 5,
 	connCount 			= 0;
 
