@@ -11,7 +11,6 @@ class Data extends CI_Controller {
 	public function __construct () {
 
 		parent::__construct();
-		$this->load->model( 'Api_data' );
 		$this->load->database();
 
 		date_default_timezone_set( 'America/Los_Angeles' );
@@ -26,6 +25,10 @@ class Data extends CI_Controller {
 	// end (specified as Y-m-d H:i:s)*
 	// Example ajax request: $.post( '../nccp/index.php/data/get', { sensor_ids: 7, start: "2012-01-01", end: "2012-02-01" }, function ( response ) { console.log( response ) } )
 	public function get () {
+		// Load this here instead of the constructor because the SOAP client takes
+		// a while to load
+		$this->load->model( 'Api_data' );
+
 		// Make sure we should be here
 		if ( ! $this->input->post('sensor_ids') ) die( 'At least one sensor_id must be supplied.' );
 		if ( ! $this->input->post('start') ) die( 'Start date and/or time must be specified.' );
@@ -129,6 +132,8 @@ class Data extends CI_Controller {
 		// If start/end is cool, get the number of results from the API
 		// and perform the data update
 		if ( isset( $start ) && isset( $end ) ) {
+			$this->load->model( 'Api_data' );
+			
 			// Figure out how much data there is
 			$num_results = $this->Api_data->NumberOfResults( array( $sensor_id ), $start, $end );
 
