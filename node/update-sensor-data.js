@@ -120,7 +120,7 @@ function GetSensor ( UpdateCallback ) {
 		if ( err ) console.log( err );
 
 		connCount++;
-		if ( config.debug ) console.log( 'GetSensor connection added.' );			
+		if ( config.debug ) console.log( 'GetSensor connection added.' );
 
 		// First get a sensor that needs to be updated (is out of date by > 2 day)
 		// along with the last timestamp for that sensor
@@ -128,8 +128,9 @@ function GetSensor ( UpdateCallback ) {
 		connection.query( "SELECT list.logical_sensor_id FROM ci_logical_sensor AS list \
 			WHERE pending = 0 \
 			AND ( ( ( sensor_updated + INTERVAL ? HOUR ) < ( CONVERT_TZ(UTC_TIMESTAMP(), 'UTC', 'US/Pacific' ) ) ) \
-			OR sensor_updated IS NULL ) \
-			LIMIT 1",
+			OR sensor_updated IS NULL ) " +
+			_.reduce( sensorPool, function ( memo, num ) { return memo + 'AND logical_sensor_id <> ' + num + ' ' }, '' ) +
+			"LIMIT 1",
 			[ UPDATE_INTERVAL ],
 			function ( err, rows ) {					
 				if ( err ) console.log( err );
