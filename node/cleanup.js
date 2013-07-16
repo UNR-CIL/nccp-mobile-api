@@ -54,7 +54,8 @@ function Cleanup () {
 		DeleteFromTable( 'ci_logical_sensor_data' );
 
 		// Low-res sensor data (hourly)
-		DeleteFromTable( 'ci_logical_sensor_data_hourly' );
+		// Not done at the moment but uncomment the below if desired
+		// DeleteFromTable( 'ci_logical_sensor_data_hourly' );
 	}
 
 	// ... then wait a while and do it again
