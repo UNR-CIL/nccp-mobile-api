@@ -8,10 +8,12 @@
 // Example query
 
 // Get the mysql driver and express for building the RESTful-ness
-var db = require( 'mysql' ),
-	e = require( 'express' ),
-	_ = require( 'underscore' ),
-	http = require( 'http' );
+var mysql 	= require( 'mysql' ),
+	e 		= require( 'express' ),
+	_ 		= require( 'underscore' ),
+	http 	= require( 'http' ),
+	csv 	= require('csv'),
+	fs 		= require('fs');
 
 // Get ze config info
 var config = require( 'config' );
@@ -36,6 +38,15 @@ api.configure( function () {
 	api.use( e.compress() );
 });
 
+// Create connection pool for use with the database
+
+var pool = mysql.createPool({
+	host: config.db.host,
+	user: config.db.user,
+	password: config.db.pass,
+	database: config.db.name
+});
+
 // Define the API routes
 
 // This returns a list of sensors based on query parameters which should
@@ -44,22 +55,11 @@ api.configure( function () {
 // sites - data site ID(s)
 // types - type of measurement ID(s) (maximum, average, etc.)
 api.get( '/api/search', function ( request, response ) {
-
 	var q = request.query;
 
 	if ( ! q.properties && ! q.sites && ! q.types ) {
 		response.jsonp( { error: 'Must send at least one of: sensor properties, sites or types.' } );
 	} else {
-
-		// Set up the database connection
-		var conn = db.createConnection({
-			host: config.db.host,
-			user: config.db.user,
-			password: config.db.pass,
-			database: config.db.name
-		});
-
-		conn.connect();
 
 		// Build the query from passed parameters
 		var sql = "SELECT r.*, d.site_id, d.name FROM ci_logical_sensor_relationships AS r " +
@@ -82,32 +82,31 @@ api.get( '/api/search', function ( request, response ) {
 
 		sql += "GROUP BY r.logical_sensor_id LIMIT " + limit;
 
-		// Send the query
-		conn.query( sql, function ( err, rows, fields ) {
-			console.log( 'Sending response...' );
+		pool.getConnection( function ( err, connection ) {
+			if ( err ) console.log( err );
 
-			// Process errors first
-			if ( err ) {
+			// Send the query
+			connection.query( sql, function ( err, rows ) {
+				console.log( 'Sending response...' );
 
-				console.log( err );
-				response.jsonp( { error: 'An error occurred. =(' } );
+				// Process errors first
+				if ( err ) {
 
-			// Otherwise process the results
-			} else {
+					console.log( err );
+					response.jsonp( { error: 'An error occurred. =(' } );
 
-				if ( rows.length > 0 ) {					
-					response.jsonp( rows );
-				} else
-					response.jsonp( { msg: 'No results found.' } );
+				// Otherwise process the results
+				} else {
+					if ( rows.length > 0 ) {					
+						response.jsonp( rows );
+					} else
+						response.jsonp( { msg: 'No results found.' } );
+				}
 
-			}
-
-			conn.end();
-
-		});	
-
+				connection.end();
+			});		
+		});
 	}
-
 });
 
 // Request data points from the database
@@ -121,22 +120,19 @@ api.get( '/api/search', function ( request, response ) {
 // Example AJAX request:
 // $.getJSON( 'http://nccp.local:6227/api/get/?callback=?', { sensor_ids: 7, count: 10, start: '2013-02-08', end: '2013-02-10' }, function ( response ) { console.log( response ) } )
 api.get( '/api/get', function ( request, response ) {
-
 	var q = request.query;
 
 	// Make sure this is a valid request
 	if ( ! q.sensor_ids ) {
-		response.jsonp( { error: 'Must send valid sensor ID.' } );
+		response.jsonp( { error: 'Must send valid sensor ID(s).' } );
 	} else if ( ! q.start || ! q.end ) {
 		response.jsonp( { error: 'Must send valid start and end' } );
 	} else {
 		console.log( 'Request received for sensor(s) ' + q.sensor_ids );
 
-		// Set parameters up
-
 		// Set skip if interval was passed.  This assumes interval 
 		if ( q.interval && _.has( intervals, q.interval) ) {
-			var skip = intervals[request.query.interval];
+			var skip = intervals[q.interval];
 
 			// Switch to the hourly table for anything above minute data
 			table = "ci_logical_sensor_data_hourly";
@@ -146,28 +142,64 @@ api.get( '/api/get', function ( request, response ) {
 		// the interval is processed server-side, not in the DB (quicker)
 		if ( q.count ) limit = skip ? q.count * skip : q.count;
 
-		// Set up the database connection
-		var conn = db.createConnection({
-			host: config.db.host,
-			user: config.db.user,
-			password: config.db.pass,
-			database: config.db.name
-		});
-
-		conn.connect();
+		// Make sure sensors_ids is an array
+		if ( ! ( q.sensor_ids instanceof Array ) ) q.sensor_ids = [q.sensor_ids];
 
 		// Format the sensor list
 		sensor_ids = _.map( q.sensor_ids, function ( v ) { return 'logical_sensor_id = ' + v } ).join( " OR " );
 
-		// Send the query
-		conn.query( "SELECT logical_sensor_id, timestamp, value " + 
-			"FROM " + table + " " + 
-			"WHERE (" + sensor_ids + ") AND timestamp " +
-			"BETWEEN ? AND ? " +
-			"ORDER BY timestamp " +
-			"LIMIT ?",
-			[ q.start, q.end, parseInt( limit ) ], 
-			function ( err, rows, fields ) {
+		_GetSensorData( table, sensor_ids, {
+			start: q.start, 
+			end: q.end, 
+			limit: parseInt( limit ),
+			skip: skip
+		}, function ( results ) {
+			if ( results ) {
+				console.log( 'Sending response...' );
+
+				// If requested, send back a link to a CSV.  Otherwise send results directly.
+				if ( q.csv ) {
+					_GenerateCSV( results, function ( link ) {
+						response.jsonp( { download_link: link } );
+					});
+				} else {
+					response.jsonp( results );
+				}				
+			} else {
+				response.jsonp( { msg: 'No results found.' } );
+			}
+		});		
+	}
+});
+
+// Request information about specified sensors (type, unit, deployment, etc.)
+// Params:
+// sensor_ids* - array of at least one sensor ID
+api.get( '/api/get/sensor-info', function ( request, response ) {
+	var q = request.query;
+
+	if ( ! q.sensor_ids ) {
+		response.jsonp( { error: 'Must send at least one valid sensor ID.' } );
+	} else {
+		// Format the sensor_ids
+		sensor_ids = _.map( q.sensor_ids, function ( v ) { return 'r.logical_sensor_id = ' + v } ).join( " OR " );
+
+		pool.getConnection( function ( err, connection ) {
+			if ( err ) console.log( err );
+
+			// Send the query
+			connection.query( "SELECT DISTINCT " +
+			"r.logical_sensor_id, r.deployment_id, r.property_id, r.system_id, r.type_id, r.unit_id, r.`interval`, " +
+			"d.lat, d.lng, d.z_offset, d.`name` AS deployment_name, d.site_id, d.site_name, " +
+			"p.description AS property_description, p.`name` AS property_name, p.system_name, " +
+			"t.description AS type_description, t.`name` AS type_name, " +
+			"u.abbreviation, u.aspect_id, u.aspect_name, u.`name` AS unit_name " +
+			"FROM ci_logical_sensor_relationships AS r " +
+			"JOIN ci_logical_sensor_deployment AS d ON d.deployment_id = r.deployment_id " +
+			"JOIN ci_logical_sensor_property AS p ON p.property_id = r.property_id " +
+			"JOIN ci_logical_sensor_types AS t ON t.type_id = r.type_id " +
+			"JOIN ci_logical_sensor_units AS u ON u.unit_id = r.unit_id " +
+			"WHERE ( " + sensor_ids + " )", function ( err, rows ) {
 				console.log( 'Sending response...' );
 
 				// Process errors first
@@ -179,83 +211,27 @@ api.get( '/api/get', function ( request, response ) {
 				// Otherwise process the results
 				} else {
 
-					if ( rows.length > 0 ) {
-						var final_results = {
-							num_results: rows.length
-						};
-
-						// Group results by sensor_id
-						final_results.sensor_data = _.groupBy( rows, 'logical_sensor_id' );
-
-						// Filter data by interval if it was passed
-						if ( skip ) {
-							var final_num_results = 0;
-
-							_.each( final_results.sensor_data, function ( sensor, index ) {
-								var final_rows = [];
-
-								for ( var i = 0; i < sensor.length; i += skip ) {
-									final_rows.push( sensor[i] );
-								}
-
-								final_results.sensor_data[index] = final_rows;
-								final_num_results += final_rows.length;
-							});	
-
-							final_results.num_results = final_num_results;
-						}				
-
-						// Kick results back
-						response.jsonp( final_results );
-
+					if ( rows.length > 0 ) {					
+						response.jsonp( rows );
 					} else
+						response.jsonp( { msg: 'Nothing found.' } );
 
-						response.jsonp( { msg: 'No results found.' } );
 				}
 
-				conn.end();
-
-		});	
-	}	
-
+				connection.end();
+			});
+		});		
+	}
 });
 
-// Request information about specified sensors (type, unit, deployment, etc.)
-// Params:
-// sensor_ids* - array of at least one sensor ID
-api.get( '/api/get/sensor-info', function ( request, response ) {
-
-	var q = request.query;
-
-	if ( ! q.sensor_ids ) {
-		response.jsonp( { error: 'Must send at least one valid sensor ID.' } );
-	} else {
-		// Set up the database connection
-		var conn = db.createConnection({
-			host: config.db.host,
-			user: config.db.user,
-			password: config.db.pass,
-			database: config.db.name
-		});
-
-		conn.connect();
-
-		// Format the sensor_ids
-		sensor_ids = _.map( q.sensor_ids, function ( v ) { return 'r.logical_sensor_id = ' + v } ).join( " OR " );
+// Retrieve the current list of properties.  Searching said properties uses search
+// defined above.
+api.get( '/api/get/sensors/properties', function ( request, response ) {
+	pool.getConnection( function ( err, connection ) {
+		if ( err ) console.log( err );
 
 		// Send the query
-		conn.query( "SELECT DISTINCT " +
-		"r.logical_sensor_id, r.deployment_id, r.property_id, r.system_id, r.type_id, r.unit_id, r.`interval`, " +
-		"d.lat, d.lng, d.z_offset, d.`name` AS deployment_name, d.site_id, d.site_name, " +
-		"p.description AS property_description, p.`name` AS property_name, p.system_name, " +
-		"t.description AS type_description, t.`name` AS type_name, " +
-		"u.abbreviation, u.aspect_id, u.aspect_name, u.`name` AS unit_name " +
-		"FROM ci_logical_sensor_relationships AS r " +
-		"JOIN ci_logical_sensor_deployment AS d ON d.deployment_id = r.deployment_id " +
-		"JOIN ci_logical_sensor_property AS p ON p.property_id = r.property_id " +
-		"JOIN ci_logical_sensor_types AS t ON t.type_id = r.type_id " +
-		"JOIN ci_logical_sensor_units AS u ON u.unit_id = r.unit_id " +
-		"WHERE ( " + sensor_ids + " )", function ( err, rows, fields ) {
+		connection.query( "SELECT property_id, description, name FROM ci_logical_sensor_property ORDER BY name", function ( err, rows, fields ) {
 			console.log( 'Sending response...' );
 
 			// Process errors first
@@ -274,137 +250,77 @@ api.get( '/api/get/sensor-info', function ( request, response ) {
 
 			}
 
-			conn.end();
-
-		});
-	}
-});
-
-// Retrieve the current list of properties.  Searching said properties uses search
-// defined above.
-api.get( '/api/get/sensors/properties', function ( request, response ) {
-
-	// Set up the database connection
-	var conn = db.createConnection({
-		host: config.db.host,
-		user: config.db.user,
-		password: config.db.pass,
-		database: config.db.name
+			connection.end();
+		});	
 	});
-
-	conn.connect();
-
-	// Send the query
-	conn.query( "SELECT property_id, description, name FROM ci_logical_sensor_property ORDER BY name", function ( err, rows, fields ) {
-		console.log( 'Sending response...' );
-
-		// Process errors first
-		if ( err ) {
-
-			console.log( err );
-			response.jsonp( { error: 'An error occurred. =(' } );
-
-		// Otherwise process the results
-		} else {
-
-			if ( rows.length > 0 ) {					
-				response.jsonp( rows );
-			} else
-				response.jsonp( { msg: 'Nothing found.' } );
-
-		}
-
-		conn.end();
-
-	});
-
 });
 
 // Retrieve the current list of data sites.  Searching said sites uses search
 // defined above.
 api.get( '/api/get/sensors/sites', function ( request, response ) {
+	pool.getConnection( function ( err, connection ) {
+		if ( err ) console.log( err );
 
-	// Set up the database connection
-	var conn = db.createConnection({
-		host: config.db.host,
-		user: config.db.user,
-		password: config.db.pass,
-		database: config.db.name
-	});
+		// Send the query
+		connection.query( "SELECT lat, lng, site_id, site_name FROM ci_logical_sensor_deployment GROUP BY site_name ORDER BY site_name", function ( err, rows, fields ) {
+			console.log( 'Sending response...' );
 
-	conn.connect();
+			// Process errors first
+			if ( err ) {
 
-	// Send the query
-	conn.query( "SELECT lat, lng, site_id, site_name FROM ci_logical_sensor_deployment GROUP BY site_name ORDER BY site_name", function ( err, rows, fields ) {
-		console.log( 'Sending response...' );
+				console.log( err );
+				response.jsonp( { error: 'An error occurred. =(' } );
 
-		// Process errors first
-		if ( err ) {
+			// Otherwise process the results
+			} else {
 
-			console.log( err );
-			response.jsonp( { error: 'An error occurred. =(' } );
+				if ( rows.length > 0 ) {					
+					response.jsonp( rows );
+				} else
+					response.jsonp( { msg: 'Nothing found.' } );
 
-		// Otherwise process the results
-		} else {
+			}
 
-			if ( rows.length > 0 ) {					
-				response.jsonp( rows );
-			} else
-				response.jsonp( { msg: 'Nothing found.' } );
-
-		}
-
-		conn.end();
-
-	});
-
+			connection.end();
+		});	
+	});	
 });
 
 // Retrieve the current list of property types (avg, min, max, etc.).  Searching said types uses search
 // defined above.
 api.get( '/api/get/sensors/types', function ( request, response ) {
+	pool.getConnection( function ( err, connection ) {
+		if ( err ) console.log( err );
 
-	// Set up the database connection
-	var conn = db.createConnection({
-		host: config.db.host,
-		user: config.db.user,
-		password: config.db.pass,
-		database: config.db.name
+		// Send the query
+		connection.query( "SELECT * FROM ci_logical_sensor_types ORDER BY name", function ( err, rows, fields ) {
+			console.log( 'Sending response...' );
+
+			// Process errors first
+			if ( err ) {
+
+				console.log( err );
+				response.jsonp( { error: 'An error occurred. =(' } );
+
+			// Otherwise process the results
+			} else {
+
+				if ( rows.length > 0 ) {					
+					response.jsonp( rows );
+				} else
+					response.jsonp( { msg: 'Nothing found.' } );
+
+			}
+
+			connection.end();
+		});
 	});
-
-	conn.connect();
-
-	// Send the query
-	conn.query( "SELECT * FROM ci_logical_sensor_types ORDER BY name", function ( err, rows, fields ) {
-		console.log( 'Sending response...' );
-
-		// Process errors first
-		if ( err ) {
-
-			console.log( err );
-			response.jsonp( { error: 'An error occurred. =(' } );
-
-		// Otherwise process the results
-		} else {
-
-			if ( rows.length > 0 ) {					
-				response.jsonp( rows );
-			} else
-				response.jsonp( { msg: 'Nothing found.' } );
-
-		}
-
-		conn.end();
-
-	});
-
 });
 
 // Check main NCCP portal status
 // Example AJAX call
 // $.getJSON( 'http://nccp.local:6227/api/status/website?callback=?', function ( response ) { console.log( response ) } )
 api.get( '/api/status/website', function ( request, response ) {
-
 	// Set up parameters
 	var params = {
 		host: 'sensor.nevada.edu',
@@ -413,19 +329,17 @@ api.get( '/api/status/website', function ( request, response ) {
 	}
 
 	// Check the main site
-	check_url( params, function ( result ) {
+	_CheckUrl( params, function ( result ) {
 		if ( result.up ) {
 			response.jsonp({ success: 'The NCCP portal is up.' });
 		} else {
 			response.jsonp({ error: 'The NCCP portal is currently down.' });
 		}	
 	});	
-
 });
 
 // Check NCCP Measurement service status
 api.get( '/api/status/services/measurement', function ( request, response ) {
-
 	// Set up parameters
 	var params = {
 		host: 'sensor.nevada.edu',
@@ -434,19 +348,17 @@ api.get( '/api/status/services/measurement', function ( request, response ) {
 	};
 
 	// Check the Measurement service
-	check_url( params, function ( result ) {
+	_CheckUrl( params, function ( result ) {
 		if ( result.up ) {
 			response.jsonp({ success: 'The measurement service is up.' });
 		} else {
 			response.jsonp({ error: 'The measurement service is currently down.' });
 		}	
 	});	
-
 });
 
 // Check NCCP Data service status
 api.get( '/api/status/services/data', function ( request, response ) {
-
 	// Set up parameters
 	var params = {
 		host: 'sensor.nevada.edu',
@@ -455,14 +367,13 @@ api.get( '/api/status/services/data', function ( request, response ) {
 	};
 
 	// Check the Data service
-	check_url( params, function ( result ) {
+	_CheckUrl( params, function ( result ) {
 		if ( result.up ) {
 			response.jsonp({ success: 'The data service is up.' });
 		} else {
 			response.jsonp({ error: 'The data service is currently down.' });
 		}	
 	});	
-
 });
 
 // Start the music ///////////////////////////////////////
@@ -471,10 +382,92 @@ api.listen( port );
 
 console.log( 'Data API is active on port ' + port );
 
-// Useful functions //////////////////////////////////////
+/////////////////////////////////////////////////////////
+// EXIT /////////////////////////////////////////////////
+/////////////////////////////////////////////////////////
+
+process.on( 'SIGINT', function() {
+    console.log("\nShutting down by interrupt...");
+
+    pool.end();
+    process.exit( 0 );
+});
+
+//////////////////////////////////////////////////////////
+// Internal functions ////////////////////////////////////
+//////////////////////////////////////////////////////////
+
+// Args: start, end, limit, skip
+function _GetSensorData ( table, sensor_ids, args, callback ) {
+	pool.getConnection( function ( err, connection ) {
+		if ( err ) console.log( err );
+
+		// Send the query
+		connection.query( "SELECT logical_sensor_id, timestamp, value " + 
+			"FROM " + table + " " + 
+			"WHERE (" + sensor_ids + ") AND timestamp " +
+			"BETWEEN ? AND ? " +
+			"ORDER BY timestamp " +
+			"LIMIT ?",
+			[ args.start, args.end, args.limit ], 
+			function ( err, rows ) {
+				// Process errors first
+				if ( err ) {
+
+					console.log( err );
+					response.jsonp( { error: 'An error occurred. =(' } );
+
+				// Otherwise process the results
+				} else {
+					if ( rows.length > 0 ) {
+						var final_results = {
+							num_results: rows.length
+						};
+
+						// Group results by sensor_id
+						final_results.sensor_data = _.groupBy( rows, 'logical_sensor_id' );
+
+						// Filter data by interval if it was passed
+						if ( args.skip ) {
+							var final_num_results = 0;
+
+							_.each( final_results.sensor_data, function ( sensor, index ) {
+								var final_rows = [];
+
+								for ( var i = 0; i < sensor.length; i += skip ) {
+									final_rows.push( sensor[i] );
+								}
+
+								final_results.sensor_data[index] = final_rows;
+								final_num_results += final_rows.length;
+							});	
+
+							final_results.num_results = final_num_results;
+						}				
+
+						callback( final_results );							
+					} else { 
+						callback( null );
+					}
+				}
+
+				connection.end();
+		});		
+	});
+}
+
+function _GenerateCSV ( data, callback ) {
+	fs.openSync( './csv/test.csv', 'w' );
+
+	csv()
+	.from.array( ["1", "2", "3", "4", "5"] )
+	.to('./csv/test.csv');
+
+	callback( 'http://google.com' );
+}
 
 // Check url and return appropriate success/error to callback
-function check_url ( params, callback ) {
+function _CheckUrl ( params, callback ) {
 
 	// Send the request
 	http.get( params, function( res ) {
@@ -492,7 +485,7 @@ function check_url ( params, callback ) {
 }
 
 // Cuts data down to just values
-function format_data ( data, format ) {
+function _FormatData ( data, format ) {
 	var final = [];
 
 	if ( format == 'raw' )
