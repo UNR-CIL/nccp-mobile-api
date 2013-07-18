@@ -12,8 +12,9 @@ var mysql 	= require( 'mysql' ),
 	e 		= require( 'express' ),
 	_ 		= require( 'underscore' ),
 	http 	= require( 'http' ),
-	csv 	= require('csv'),
-	fs 		= require('fs');
+	csv 	= require( 'csv' ),
+	fs 		= require( 'fs' ),
+	uuid	= require( 'node-uuid' );
 
 // Get ze config info
 var config = require( 'config' );
@@ -457,13 +458,30 @@ function _GetSensorData ( table, sensor_ids, args, callback ) {
 }
 
 function _GenerateCSV ( data, callback ) {
-	fs.openSync( './csv/test.csv', 'w' );
+	var filename = 'logical_sensor_data_' + uuid.v1() + '.csv',
+		filepath = config.csv.directory + filename,
+		file = fs.openSync( filepath, 'w' )
+		final_array = [];
 
+	// Push header rows
+	final_array.push( [ 'Logical Sensor ID', 'Timestamp', 'Value' ] );
+
+	// For each sensor, format the data rows and push to the final array
+	_.each( data.sensor_data, function ( sensor ) {
+		final_array = final_array.concat( _.map( sensor, function ( row ) {
+			return [ JSON.stringify( row.logical_sensor_id ), row.timestamp.toJSON(), row.value.toString() ];
+		}));
+	});
+
+	// Write the CSV
 	csv()
-	.from.array( ["1", "2", "3", "4", "5"] )
-	.to('./csv/test.csv');
+		.from( final_array )
+		.to( filepath, { flags: 'a' } );	
 
-	callback( 'http://google.com' );
+	// Respond with the link to the finished CSV
+	callback( config.csv.path + filename );
+
+	fs.closeSync( file );
 }
 
 // Check url and return appropriate success/error to callback
