@@ -171,8 +171,8 @@ class Data extends CI_Controller {
 			if ( ! empty( $data ) ) {
 				$hourly_data = $this->get_hourly_data( $data, $sensor_info );
 
-				$this->process_data_set( $data, 'ci_logical_sensor_data' );
-				$this->process_data_set( $hourly_data, 'ci_logical_sensor_data_hourly' );
+				$this->process_data_set_single( $data, 'ci_logical_sensor_data' );
+				$this->process_data_set_single( $hourly_data, 'ci_logical_sensor_data_hourly' );
 
 				$total += count( $data );
 				$hourly_total += count( $hourly_data );					
@@ -229,35 +229,56 @@ class Data extends CI_Controller {
 		// Get the number of results
 		echo json_encode( array( 'num_results' => $this->Api_data->NumberOfResults( $sensors, $start, $end ) ) );
 	}
-
+	
 	private function process_data_set( &$data, $table ) {
-		if ( count( $data ) > 0 ) {
-			// Compound insert statements
-			$sql = sprintf( "INSERT IGNORE INTO %s VALUES ", $table );
+                if ( count( $data ) > 0 ) {
+                        // Compound insert statements
+                        $sql = sprintf( "INSERT IGNORE INTO %s VALUES ", $table );
 
-			foreach ( $data as $index => $row ) {
-				// Create timestamp from row timestamp
-				$date = new DateTime( $row->TimeStamp );
+                        foreach ( $data as $index => $row ) {
+                                // Create timestamp from row timestamp
+                                $date = new DateTime( $row->TimeStamp );
 
-				if ( isset( $row->LogicalSensorId ) && $row->LogicalSensorId > 0 ) { // This should never be 0.  EVER.  >=(
-					$sql .= sprintf(
-						"( %d, '%s', %d, %.18f )",
-						$row->LogicalSensorId,
-						$row->TimeStamp,
-						$date->getTimestamp(),
-						$row->Value				
-					);
-				} else {
-					echo json_encode( array( 'warning' => 'No data for sensor on index ' . $index, 'data' => $data ) );
-				}					
+                                if ( isset( $row->LogicalSensorId ) && $row->LogicalSensorId > 0 ) { // This should never be 0.  EVER.  >=(
+                                        $sql .= sprintf(
+                                                "( %d, '%s', %d, %.18f )",
+                                                $row->LogicalSensorId,
+                                                $row->TimeStamp,
+                                                $date->getTimestamp(),
+                                                $row->Value
+                                        );
+                                } else {
+                                        echo json_encode( array( 'warning' => 'No data for sensor on index ' . $index, 'data' => $data ) );
+                                }
 
-				if ( $index != ( count( $data ) - 1 ) )
-					$sql .= ',';
-			}	
+                                if ( $index != ( count( $data ) - 1 ) )
+                                        $sql .= ',';
+                        }
 
-			$this->db->query( $sql );	
-		}
-	}
+                        $this->db->query( $sql );
+                }
+        }
+
+	private function process_data_set_single( &$data, $table ) {
+                if ( count( $data ) > 0 ) {
+                        foreach ( $data as $index => $row ) {
+                                // Create timestamp from row timestamp
+                                $date = new DateTime( $row->TimeStamp );
+
+                                if ( isset( $row->LogicalSensorId ) && $row->LogicalSensorId > 0 ) { // This should never be 0.  EVER.  >=(
+                               		$this->db->query( sprintf( "INSERT IGNORE INTO %s VALUES ( %d, '%s', %d, %.18f )", 
+										$table,
+										$row->LogicalSensorId,
+										$row->TimeStamp,
+										$date->getTimestamp(),
+										$row->Value 
+									)); 
+								} else {
+                                        echo json_encode( array( 'warning' => 'No data for sensor on index ' . $index, 'data' => $data ) );
+                                }
+                        }
+                }
+        }	
 
 	private function get_hourly_data ( &$data, $sensor_info ) {
 		$hourly_data = array();

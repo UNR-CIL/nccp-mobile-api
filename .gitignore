@@ -8,3 +8,4 @@ wp-config.php
 data/application/config/config.php
 node/node_modules/config.js
 wp-content/uploads/csv
+node/logs/*.log
