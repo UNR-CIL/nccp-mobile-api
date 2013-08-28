@@ -101,7 +101,7 @@ api.get( '/api/search', function ( request, response ) {
 					if ( rows.length > 0 ) {					
 						response.jsonp( rows );
 					} else
-						response.jsonp( { msg: 'No results found.' } );
+						response.jsonp( { msg: 'No results found. Please try a different search.' } );
 				}
 
 				connection.end();
@@ -167,7 +167,7 @@ api.get( '/api/get', function ( request, response ) {
 					response.jsonp( results );
 				}				
 			} else {
-				response.jsonp( { msg: 'No results found.' } );
+				response.jsonp( { msg: 'No results found for that sensor. Please try a different query or date/time.' } );
 			}
 		});		
 	}
