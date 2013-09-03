@@ -212,8 +212,15 @@ api.get( '/api/get/sensor-info', function ( request, response ) {
 				// Otherwise process the results
 				} else {
 
-					if ( rows.length > 0 ) {					
-						response.jsonp( rows );
+					if ( rows.length > 0 ) {
+						// Re-key the results by sensor ID and send the response
+						var results = {};
+
+						_.each( rows, function ( sensor ) {
+							results[ sensor.logical_sensor_id ] = sensor;
+						});
+
+						response.jsonp( results );
 					} else
 						response.jsonp( { msg: 'Nothing found.' } );
 
@@ -435,7 +442,7 @@ function _GetSensorData ( table, sensor_ids, args, callback ) {
 							_.each( final_results.sensor_data, function ( sensor, index ) {
 								var final_rows = [];
 
-								for ( var i = 0; i < sensor.length; i += skip ) {
+								for ( var i = 0; i < sensor.length; i += args.skip ) {
 									final_rows.push( sensor[i] );
 								}
 
