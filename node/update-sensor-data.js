@@ -14,12 +14,16 @@ var mysql = require( 'mysql' ),
 // Get ze config info
 var config = require( 'config' );
 
-// Constants and bookkeeping
+// Constants
 var UPDATE_PATH 	= config.paths.base + 'nccp/index.php/data/update_sensor_data',
 	UPDATE_INTERVAL = 4, 	// Hours, how often a sensor should be updated
 	MAX_SENSORS 	= 5, 	// Maximum number of sensors to update at a time
-	sensorPool 		= [], 	// Sensors currently updating
-	connCount 		= 0;
+	CULL_DATA 		= true, // Clean up old data according to the interval specified below
+	CULL_INTERVAL	= 3; 	// Months
+
+// Bookkeeping
+var sensorPool 		= [], 	// Sensors currently updating
+	connCount 		= 0;	// # of active DB connections
 
 // Set up the connection pool - this is not the same as the sensor pool
 var pool = mysql.createPool({
@@ -91,6 +95,13 @@ function UpdateSensorData () {
 					SendUpdateRequest( sensorId );
 
 					if ( config.debug ) console.log( 'Updating sensor ' + sensorId );
+
+					// If specified, cull sensor data as well
+					if ( CULL_DATA ) {
+						CullData( sensorId, CULL_INTERVAL, 'ci_logical_sensor_data' );
+
+						if ( config.debug ) console.log( 'Culling data on sensor ' + sensorId );
+					}
 				}
 
 				// Get another if we're not full yet
@@ -182,6 +193,31 @@ function SendUpdateRequest ( sensorId ) {
 	        SetPending( sensorId, 0 );
 	    }
 	);
+}
+
+// Kill data older than the specified interval in the specified table
+function CullData ( sensorId, interval, table ) {
+	pool.getConnection( function ( err, connection ) {
+		if ( err ) console.log( err );
+
+		connCount++;
+		if ( config.debug ) console.log( 'Cleanup connection added.' );
+
+		connection.query( "DELETE FROM " + table + " WHERE `logical_sensor_id` = ? AND `timestamp` < ( ( CONVERT_TZ( UTC_TIMESTAMP(), 'UTC', 'US/Pacific' ) ) - INTERVAL ? MONTH )", 
+			[ sensorId, interval ],
+			function ( err, rows ) {
+				if ( err ) console.log( err );
+
+				if ( config.debug ) {
+					console.log( table + ' cleanup complete.' );
+					console.log( rows );
+				}
+
+				connection.end();
+				connCount--;
+				if ( config.debug ) console.log( 'Cleanup connection removed.' );
+		});
+	});
 }
 
 // Set pending status on a single sensor to 1 or 0
